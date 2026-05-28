@@ -1,0 +1,26 @@
+name: deploy
+on:
+  workflow_dispatch:
+
+jobs:
+  prod:
+    name: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - uses: werf/actions/install@v2
+
+      - run: |
+          source "$(werf ci-env github --as-file)"
+          werf converge
+        env:
+          WERF_ENV: prod
+          WERF_SECRET_KEY: ${{ secrets.WERF_SECRET_KEY }}
+          WERF_KUBECONFIG_BASE64: ${{ secrets.KUBECONFIG_BASE64 }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
