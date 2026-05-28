@@ -1,0 +1,32 @@
+{
+  "name": "music-quiz-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "test": "vitest run src/tests"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.6",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.1",
+    "hono": "^4.10.7",
+    "ioredis": "^5.8.2",
+    "pg": "^8.16.3",
+    "socket.io": "^4.8.1",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/pg": "^8.15.6",
+    "drizzle-kit": "^0.31.8",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.14"
+  }
+}

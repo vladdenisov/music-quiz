@@ -1,0 +1,11 @@
+node_modules
+dist
+postgres_data
+.git
+.env
+.env.*
+*.md
+docs
+.helm
+infra
+docker-compose.yml

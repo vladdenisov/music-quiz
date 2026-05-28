@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $.Chart.Name }}
+  annotations:
+    werf.io/weight: "30"
+spec:
+  replicas: {{ $.Values.replicas._default }}
+  selector:
+    matchLabels:
+      app: {{ $.Chart.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $.Chart.Name }}
+    spec:
+      imagePullSecrets:
+        - name: registrysecretgithub
+      {{- if $.Values.migrations.enabled }}
+      initContainers:
+        - name: migrate
+          image: {{ $.Values.werf.image.app }}
+          command: ["sh", "-c", "npx drizzle-kit migrate"]
+          envFrom:
+            - secretRef:
+                name: {{ $.Chart.Name }}-envs
+          env:
+            {{- range $key, $val := $.Values.app.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+      {{- end }}
+      containers:
+        - name: app
+          image: {{ $.Values.werf.image.app }}
+          ports:
+            - containerPort: {{ $.Values.service.port }}
+          env:
+            - name: LOG_LEVEL
+              value: {{ $.Values.werf.logLevel | quote }}
+            {{- range $key, $val := $.Values.app.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ $.Values.service.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: {{ $.Values.service.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          startupProbe:
+            tcpSocket:
+              port: {{ $.Values.service.port }}
+            periodSeconds: 5
+            failureThreshold: 30
+          resources:
+            requests:
+              cpu: {{ $.Values.requests.cpu }}
+              memory: {{ $.Values.requests.memory }}
+            limits:
+              cpu: {{ $.Values.limits.cpu }}
+              memory: {{ $.Values.limits.memory }}
+          envFrom:
+            - secretRef:
+                name: {{ $.Chart.Name }}-envs

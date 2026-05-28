@@ -1,0 +1,11 @@
+project: music-quiz
+configVersion: 1
+deploy:
+  namespace: apps
+
+---
+image: app
+dockerfile: Dockerfile
+context: .
+platform:
+  - linux/amd64
