@@ -11,6 +11,7 @@ export type AppErrorCode =
   | "ANSWER_TOO_LATE"
   | "OPTION_NOT_FOUND"
   | "RATE_LIMITED"
+  | "TRACK_PREVIEW_UNAVAILABLE"
   | "TRACK_NOT_FOUND";
 
 export class AppError extends Error {

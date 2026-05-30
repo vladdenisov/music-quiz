@@ -10,7 +10,7 @@ import type { GamePreparingState, GameSettings, PublicRoundState, QuestionType, 
 import { gameSettingsSchema } from "../domain/validation.js";
 import { assertRateLimit } from "../redis/rate-limit.js";
 import { getPublicRoomState, getRoomByCode, assertPlayerInRoom } from "./room-service.js";
-import { generateTracksForGame, getDistractorPool, getTracksByIds, type StoredTrack } from "./track-service.js";
+import { ensureFreshPreview, generateTracksForGame, getDistractorPool, getTracksByIds, type StoredTrack } from "./track-service.js";
 
 type GameEvents = {
   roomState?: (roomCode: string) => Promise<void>;
@@ -37,11 +37,15 @@ export async function startGame(roomCode: string, playerId: string, settingsInpu
   if (room.hostPlayerId !== playerId) {
     throw new AppError("HOST_ONLY", "Only host can start the game", 403);
   }
-  if (room.status !== "lobby") {
+  if (room.status !== "lobby" && room.status !== "ended") {
     throw new AppError("GAME_ALREADY_STARTED", "Game already started", 409);
   }
 
   const settings = gameSettingsSchema.parse(settingsInput ?? room.settings);
+  if (room.status === "ended") {
+    await db.update(roomPlayers).set({ score: 0 }).where(eq(roomPlayers.roomId, room.id));
+  }
+
   const targetTracks = getTargetTracksCount(settings);
   await emitPreparing(room.code, settings, targetTracks, {
     phase: "queued",
@@ -211,6 +215,12 @@ export async function submitAnswer(input: {
 
   await events.leaderboardUpdated?.(room.code);
 
+  if (await hasEveryConnectedPlayerAnswered(room.id, round.id)) {
+    setTimeout(() => {
+      void endRound(room.code, round.id);
+    }, 0);
+  }
+
   return {
     accepted: true,
     selectedOptionId: selected.id,
@@ -247,9 +257,10 @@ export async function getLeaderboard(roomCode: string) {
 
 async function startRound(roomCode: string, gameId: string, roundNumber: number) {
   const [row] = await db
-    .select({ round: rounds, track: tracks })
+    .select({ round: rounds, track: tracks, game: games })
     .from(rounds)
     .innerJoin(tracks, eq(tracks.id, rounds.trackId))
+    .innerJoin(games, eq(games.id, rounds.gameId))
     .where(and(eq(rounds.gameId, gameId), eq(rounds.roundNumber, roundNumber)));
 
   if (!row) {
@@ -257,9 +268,10 @@ async function startRound(roomCode: string, gameId: string, roundNumber: number)
     return undefined;
   }
 
+  const freshTrack = await ensureFreshPreview(row.track, row.game.settings.source.market ?? "US");
+
   const startedAt = new Date();
   const endsAt = new Date(startedAt.getTime() + row.round.roundDurationSec * 1000);
-
   await db
     .update(rounds)
     .set({ status: "active", roundStartedAt: startedAt, roundEndsAt: endsAt })
@@ -272,8 +284,8 @@ async function startRound(roomCode: string, gameId: string, roundNumber: number)
     roundNumber: row.round.roundNumber,
     questionType: row.round.questionType,
     questionText: row.round.questionText,
-    previewUrl: row.track.previewUrl,
-    artworkUrl: row.track.artworkUrl ?? undefined,
+    previewUrl: freshTrack.previewUrl,
+    artworkUrl: freshTrack.artworkUrl ?? undefined,
     options: row.round.options,
     roundStartedAt: startedAt.toISOString(),
     roundEndsAt: endsAt.toISOString(),
@@ -377,6 +389,23 @@ async function buildRoundResult(roundId: string): Promise<RoundResultState> {
       };
     })
   };
+}
+
+async function hasEveryConnectedPlayerAnswered(roomId: string, roundId: string) {
+  const connectedPlayers = await db
+    .select({ playerId: roomPlayers.playerId })
+    .from(roomPlayers)
+    .where(and(eq(roomPlayers.roomId, roomId), eq(roomPlayers.isConnected, true)));
+
+  if (connectedPlayers.length === 0) return false;
+
+  const answerRows = await db
+    .select({ playerId: answers.playerId })
+    .from(answers)
+    .where(eq(answers.roundId, roundId));
+  const answeredPlayerIds = new Set(answerRows.map((answer) => answer.playerId));
+
+  return connectedPlayers.every((player) => answeredPlayerIds.has(player.playerId));
 }
 
 async function getActiveGame(roomId: string) {

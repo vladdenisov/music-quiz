@@ -9,6 +9,7 @@ import {
   type PreviewCandidate,
   type SourceTrackForMatch
 } from "../domain/matching.js";
+import { isPreviewUrlReachable } from "../domain/preview-url.js";
 import type { GamePreparingState, GameSettings } from "../domain/types.js";
 import { searchDeezerPreviewCandidates } from "../integrations/deezer.js";
 import { generateDeezerTracks } from "../integrations/deezer-source.js";
@@ -164,6 +165,34 @@ export async function getTracksByIds(ids: string[]) {
   return db.select().from(tracks).where(inArray(tracks.id, ids));
 }
 
+export async function ensureFreshPreview(track: StoredTrack, market = "US") {
+  if (await isPreviewUrlReachable(track.previewUrl)) {
+    return track;
+  }
+
+  const refreshed = await matchPreview(toSourceTrackForMatch(track), market);
+  if (!refreshed) {
+    throw new AppError("TRACK_PREVIEW_UNAVAILABLE", "Could not refresh expired track preview", 422);
+  }
+
+  const [updated] = await db
+    .update(tracks)
+    .set({
+      previewUrl: refreshed.candidate.previewUrl!,
+      previewProvider: refreshed.candidate.provider,
+      artworkUrl: track.artworkUrl ?? refreshed.candidate.artworkUrl ?? null,
+      matchScore: refreshed.score
+    })
+    .where(eq(tracks.id, track.id))
+    .returning();
+
+  if (!updated) {
+    throw new AppError("TRACK_NOT_FOUND", "Could not update refreshed track preview", 500);
+  }
+
+  return updated;
+}
+
 async function generateSourceTracks(settings: GameSettings, minimumPoolSize: number) {
   const provider = settings.source.provider ?? "spotify";
   if (provider === "deezer") return generateDeezerTracks(settings, minimumPoolSize);
@@ -179,7 +208,7 @@ async function findExistingTrack(source: string, sourceTrackId: string) {
   return track;
 }
 
-async function matchPreview(sourceTrack: GeneratedSourceTrack, market: string) {
+async function matchPreview(sourceTrack: SourceTrackForMatch, market: string) {
   const sourceForMatch: SourceTrackForMatch = {
     sourceTrackId: sourceTrack.sourceTrackId,
     title: sourceTrack.title,
@@ -244,6 +273,17 @@ async function matchPreview(sourceTrack: GeneratedSourceTrack, market: string) {
   });
 
   return null;
+}
+
+function toSourceTrackForMatch(track: StoredTrack): SourceTrackForMatch {
+  return {
+    sourceTrackId: track.sourceTrackId,
+    title: track.title,
+    artist: track.artist,
+    album: track.album,
+    durationMs: track.durationMs,
+    isrc: track.isrc
+  };
 }
 
 async function insertMatchedTrack(sourceTrack: GeneratedSourceTrack, candidate: PreviewCandidate, matchScore: number) {
